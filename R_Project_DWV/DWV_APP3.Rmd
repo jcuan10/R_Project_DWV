@@ -1,0 +1,365 @@
+---
+title: "Daily Website Visitors"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(ggthemes)
+library(forecast)
+library(tseries)
+library(xts)
+library(lubridate)
+library(tidyverse)
+library(Hmisc)
+library(corrplot)
+library(dplyr)
+library(ggfortify)
+
+DWV <- read.csv("daily-website-visitors.csv")     # Loading Dataset 
+
+DWV$Page.Loads <- as.numeric(gsub(",","",DWV$Page.Loads))
+DWV$Unique.Visits <- as.numeric(gsub(",","",DWV$Unique.Visits))
+DWV$First.Time.Visits <- as.numeric(gsub(",","",DWV$First.Time.Visits))
+DWV$Returning.Visits <- as.numeric(gsub(",","",DWV$Returning.Visits))
+
+DWV <- DWV %>%
+           rename(
+                  A_Page.Loads = Page.Loads,
+                  B_Unique.Visits = Unique.Visits,
+                  C_First.Time.Visits = First.Time.Visits,
+                  D_Returning.Visits = Returning.Visits
+                 )
+
+Date <- as.Date(DWV$Date, format = "%m/%d/%Y") # Time series base (TS)
+DWV$Date <- NULL                               # Removing TS from DWV
+DWV$Row <- NULL                                # Removing some garbage
+
+DWV2 <- DWV                                    # Saving DWV, still Dataframe 
+
+DWV$Day <- NULL                                # Removing "Day" cat. var.
+
+DWV_XTS <- as.xts(DWV, Date)        # Convert DWV into xts() object "DWV_XTS"
+
+DWV2_XTS <- DWV_XTS                            # Saving DWV_XTS just in case
+DWV2_XTS$Day.Of.Week <- NULL                   # Removing unnecessary var.
+#head(DWV2_XTS)
+
+```
+Introduction
+=====================================  
+
+Column {data-width=650}
+-----------------------------------------------------------------------
+
+```{r picture, echo = F, fig.cap = "R Data Analysis Project: Daily Website Visitors", out.width = '100%'}
+knitr::include_graphics("p2.jpg")
+```
+ 
+ 
+Jose V. Cuan
+
+February 13, 2022
+
+NYC Data Science Academy
+
+
+The Data
+=====================================  
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+# shiny inputs define here
+
+```
+
+Context:
+
+This analysis contains almost 6 years of daily time series data for several measures of traffic on a statistical forecasting note, provided by Kaggle.com.
+
+The variables under study have complex seasonality that is keyed to the day of the week and to the academic calendar. 
+
+The patterns you see here are similar in principle to what you would see in other daily data with day-of-week and time-of-year effects. 
+
+The variables are daily counts of: “Page loads”, “Unique visitors”, “First-time visitors and “Returning visitors”.
+
+There are 2167 rows of data spanning the date range from September 14, 2014, to August 19, 2020. 
+
+Distributions seem to look normal, but they fail the normality test (Shapiro-Wilk Test).
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+   
+### Introduction
+
+```{r}
+knitr::include_graphics("p4.jpg")
+```   
+ 
+### Data frame head/tail/summary
+    
+```{r}
+head(DWV2_XTS)
+
+
+tail(DWV2_XTS)
+
+
+summary(DWV[,2:5])
+
+```
+
+### Histogram of the feature variables
+
+```{r}
+data_long <- DWV[,2:5] %>%  pivot_longer(colnames(DWV[,2:5])) %>% as.data.frame()
+ggplot(data_long, aes(x = value)) + geom_histogram(aes(y = ..density..)) + geom_histogram(color="black", fill="lightblue") + labs(title = "Histogram", x = "Values", y = "Density") + facet_wrap(~ name, scales = "free")
+```
+
+
+Daily Stat
+=====================================  
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+# shiny inputs define here
+
+```
+
+A visit is defined as a stream of hits on one or more pages on the site on a given day by the same user, as identified by IP address.
+
+Multiple individuals with a shared IP address (e.g., in a computer lab) are considered as single users, so real users may be undercounted to some extent. 
+
+A visit is classified as "unique" if a hit from the same IP address has not come within the last 6 hours. 
+
+Returning visitors are identified by cookies if those are accepted. 
+
+All others are classified as first-time visitors, so the count of unique visitors is the sum of the counts of returning and first-time visitors by definition. 
+
+
+Row 
+-------------------------------------
+  
+### Average/Day - Page Loads and Visitors (feature variables)
+  
+```{r}
+DWV2$Day[DWV2$Day == "Sunday"] <- "Sun" 
+DWV2$Day[DWV2$Day == "Monday"] <- "Mon" 
+DWV2$Day[DWV2$Day == "Tuesday"] <- "Tue" 
+DWV2$Day[DWV2$Day == "Wednesday"] <- "Wed" 
+DWV2$Day[DWV2$Day == "Thursday"] <- "Thu" 
+DWV2$Day[DWV2$Day == "Friday"] <- "Fri" 
+DWV2$Day[DWV2$Day == "Saturday"] <- "Sat" 
+
+grp_bday <- group_by(DWV2, Day)
+SUM_bday <- summarise_all(grp_bday, funs(mean))
+SUM_bday$Day.Of.Week <- NULL
+require(tidyr)
+df.long <- gather(SUM_bday, variable, value, -Day)
+ggplot(data = df.long, aes(x = reorder(Day, -value), y = value, fill = variable)) + geom_col(position = position_dodge()) + labs(title = "Average by Variable ", x = "Day of the week", y = "average")
+
+```   
+
+
+The Series
+=====================================  
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+# shiny inputs define here
+
+```
+
+The following graphs show the trend of “Page loads” and “Visitors” over a time series. 
+
+All series seem to have a constant fluctuation (trend over time) and are correlated to each other
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+  
+### Page Loads and Visitors Time Serie - Overview
+  
+```{r}
+plot(as.zoo(DWV2_XTS), screens = 1, lty = 1:4,  main = "Page Loads & Visitors over time ", xlab = "Date", ylab = "value", col = rainbow(4)) 
+legend("topright", c("Page.Loads", "Unique.Visits", "First.Time.Visits", "Returning.Visits"), lty = 1:5, cex = 0.4, col = rainbow(4))
+
+```   
+
+### Page Loads and Visitors Time Serie -
+
+```{r}
+par(mfrow = c(4, 1), mex = 1, cex = 0.2)
+plot(DWV2_XTS$A_Page.Loads, main = "Page Loads", col = "#FF0000")
+plot(DWV2_XTS$B_Unique.Visits, main = "Unique Visits", col = "#80FF00")
+plot(DWV2_XTS$C_First.Time.Visits, main = "First Time Visits", col = "#00FFFF")
+plot(DWV2_XTS$D_Returning.Visits, main = "Returning Visits", col = "#8000FF")
+```
+
+### Correlation between feature variables
+
+```{r}
+title <- "Correlation Matrix - feature variables"
+corrplot.mixed(cor(DWV2_XTS), order = 'AOE', title=title)
+```
+
+
+Trends
+=====================================  
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+# shiny inputs define here
+
+```
+
+It is essential to analyze the trends prior to building any kind of time series model. 
+
+The details we are interested in pertains to any kind of trend, seasonality, or random behavior in the series. 
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+  
+### Monthly Trend
+  
+```{r}
+# Monthly Trend (Seasonal)
+par(mfrow = c(4, 1), mex = 1, cex = 0.4)
+month_tr = apply.monthly(DWV2_XTS, mean)
+barplot(month_tr$A_Page.Loads, main = "Page Loads / month", ylab = "Average" , col = "#FF0000")
+barplot(month_tr$B_Unique.Visits, main = "Unique Visits / month", ylab = "Average" , col = "#80FF00")
+barplot(month_tr$C_First.Time.Visits, main = "First Time Visits / month", ylab = "Average" , col = "#00FFFF")
+barplot(month_tr$D_Returning.Visits, main = "Returning Visits / month", ylab = "Average" , col = "#8000FF")
+```   
+
+### Quartely Trend
+
+```{r}
+# Quartely Trend (Trend)
+par(mfrow = c(4, 1), mex = 1, cex = 0.4)
+quar_tr = apply.quarterly(DWV2_XTS, mean)
+barplot(quar_tr$A_Page.Loads, main = "Page Loads / quarter", ylab = "Average" , col = "#FF0000")
+barplot(quar_tr$B_Unique.Visits, main = "Unique Visits / quarter", ylab = "Average" , col = "#80FF00")
+barplot(quar_tr$C_First.Time.Visits, main = "First Time Visits / quarter", ylab = "Average" , col = "#00FFFF")
+barplot(quar_tr$D_Returning.Visits, main = "Returning Visits / quarter", ylab = "Average" , col = "#8000FF")
+```
+
+### Yearly Trend
+
+```{r}
+# Yearly Trend (Trend)
+par(mfrow = c(4, 1), mex = 1, cex = 0.4)
+year_tr = apply.yearly(DWV2_XTS, mean)
+barplot(year_tr$A_Page.Loads, main = "Page Loads / year", ylab = "Average" , col = "#FF0000")
+barplot(year_tr$B_Unique.Visits, main = "Unique Visits / year", ylab = "Average" , col = "#80FF00")
+barplot(year_tr$C_First.Time.Visits, main = "First Time Visits / year", ylab = "Average" , col = "#00FFFF")
+barplot(year_tr$D_Returning.Visits, main = "Returning Visits / year", ylab = "Average" , col = "#8000FF")
+
+```
+
+
+Analysis 
+=====================================  
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+# shiny inputs define here
+
+```
+
+ARIMA models are commonly used in time series modeling. 
+
+In the ARIMA model, AR stands for auto-regression, I stands for integrated and MA stands for moving average. 
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+  
+### Moving Average
+  
+```{r}
+par(mfrow = c(2, 1), mex = 1, cex = 0.4)
+PL_MA <- rollmean(DWV2_XTS$A_Page.Loads, 7, align = "right")
+PL_MA <- merge(PL_MA, DWV2_XTS$A_Page.Loads)
+plot(PL_MA, main = "Moving Average - Page Loads")
+
+UV_MA <- rollmean(DWV2_XTS$B_Unique.Visits, 7, align = "right")
+UV_MA <- merge(UV_MA, DWV2_XTS$B_Unique.Visits)
+plot(UV_MA, main = "Moving Average - Unique Visits")
+```   
+
+### Autocorrelation
+
+```{r}
+par(mfrow = c(2, 1), mex = 1, cex = 0.4)
+acf(DWV2_XTS$A_Page.Loads, main = "Autocorrelation - Page Loads")
+acf(DWV2_XTS$B_Unique.Visits, main = "Autocorrelation - Unique Visits")
+```
+
+### Partial Autocorrelation
+
+```{r}
+par(mfrow = c(2, 1), mex = 1, cex = 0.4)
+pacf(DWV2_XTS$A_Page.Loads, main = "Partial Autocorrelation - Page Loads")
+pacf(DWV2_XTS$B_Unique.Visits, main = "Partial Autocorrelation - Unique Visits")
+```
+
+
+Forecast
+=====================================  
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+# shiny inputs define here
+
+```
+
+Once we have the final ARIMA model, we are now ready to make predictions on the future time points. 
+
+We can also visualize the trends if the model works fine.
+
+Row {.tabset .tabset-fade}
+-------------------------------------
+  
+### Page Loads - ARIMA Model
+  
+```{r}
+AAm_PL <- auto.arima(DWV2_XTS$A_Page.Loads)
+checkresiduals(AAm_PL)
+
+```   
+
+### Unique Visitors - ARIMA Model
+  
+```{r}
+AAm_UV <- auto.arima(DWV2_XTS$B_Unique.Visits)
+checkresiduals(AAm_UV)
+```   
+
+### Page Loads - Forecast
+
+```{r}
+fc_PL <- forecast(AAm_PL, h=100)
+autoplot(fc_PL)
+```
+
+### Unique Visitors - Forecast
+
+```{r}
+fc_UV <- forecast(AAm_UV, h=100)
+autoplot(fc_UV)
+```
+
+### Conclusion
+
+```{r}
+knitr::include_graphics("p5.jpg")
+```
